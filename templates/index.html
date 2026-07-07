@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phy-Chrono — ระบบออกโจทย์ฟิสิกส์</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+.header { background: linear-gradient(135deg, #1e40af, #7c3aed); padding: 20px 40px; display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 24px; font-weight: 700; color: white; }
+.header span { font-size: 13px; color: #bfdbfe; }
+.container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+.card { background: #1e293b; border-radius: 16px; padding: 24px; margin-bottom: 20px; border: 1px solid #334155; }
+.card h2 { font-size: 16px; color: #94a3b8; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.form-group { flex: 1; min-width: 150px; }
+label { font-size: 13px; color: #94a3b8; display: block; margin-bottom: 6px; }
+input, select { width: 100%; padding: 10px 14px; background: #0f172a; border: 1px solid #334155; border-radius: 10px; color: #e2e8f0; font-size: 14px; }
+input:focus, select:focus { outline: none; border-color: #3b82f6; }
+.btn { padding: 12px 24px; border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(135deg, #3b82f6, #7c3aed); color: white; width: 100%; margin-top: 12px; }
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.level-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.level-tab { flex: 1; padding: 10px; border: 1px solid #334155; border-radius: 10px; background: #0f172a; color: #94a3b8; cursor: pointer; font-size: 13px; text-align: center; transition: all 0.2s; }
+.level-tab.active.easy { background: #14532d; border-color: #22c55e; color: #86efac; }
+.level-tab.active.medium { background: #713f12; border-color: #f59e0b; color: #fcd34d; }
+.level-tab.active.hard { background: #7f1d1d; border-color: #ef4444; color: #fca5a5; }
+.question-card { background: #0f172a; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #334155; }
+.q-num { font-size: 12px; color: #64748b; margin-bottom: 8px; }
+.q-text { font-size: 15px; color: #e2e8f0; line-height: 1.7; margin-bottom: 14px; }
+.answer-area { display: flex; gap: 10px; }
+.answer-input { flex: 1; padding: 10px 14px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; color: #e2e8f0; font-size: 14px; resize: vertical; min-height: 60px; }
+.answer-input:focus { outline: none; border-color: #3b82f6; }
+.btn-check { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.btn-check:hover { background: #2563eb; }
+.btn-check:disabled { opacity: 0.5; cursor: not-allowed; }
+.result-box { margin-top: 12px; padding: 14px; border-radius: 10px; font-size: 14px; line-height: 1.6; display: none; }
+.result-box.correct { background: #14532d; border: 1px solid #22c55e; color: #86efac; }
+.result-box.wrong { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; }
+.result-box.partial { background: #713f12; border: 1px solid #f59e0b; color: #fcd34d; }
+.score-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; margin-left: 8px; }
+.loading { text-align: center; padding: 40px; color: #64748b; }
+.dots { display: inline-flex; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; animation: bounce 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-8px)} }
+.summary { background: linear-gradient(135deg, #1e40af22, #7c3aed22); border: 1px solid #3b82f6; border-radius: 12px; padding: 20px; text-align: center; display: none; }
+.summary h3 { font-size: 20px; color: #60a5fa; margin-bottom: 8px; }
+.summary p { color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>⚡ Phy-Chrono</h1>
+    <span>ระบบออกโจทย์ฟิสิกส์อัจฉริยะ — ตรวจคำตอบอัตโนมัติ</span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>ตั้งค่าโจทย์</h2>
+    <div class="form-row">
+      <div class="form-group" style="flex:2">
+        <label>หัวข้อที่ต้องการ</label>
+        <input type="text" id="topic" placeholder="เช่น การเคลื่อนที่ในแนวราบ, กฎนิวตัน" value="การเคลื่อนที่ในแนวราบ">
+      </div>
+      <div class="form-group">
+        <label>จำนวนข้อ</label>
+        <select id="amount">
+          <option value="3">3 ข้อ</option>
+          <option value="5" selected>5 ข้อ</option>
+          <option value="10">10 ข้อ</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <label style="font-size:13px;color:#94a3b8;display:block;margin-bottom:8px">ระดับความยาก</label>
+      <div class="level-tabs">
+        <div class="level-tab easy active" onclick="selectLevel('1', this)">🟢 ง่าย</div>
+        <div class="level-tab medium" onclick="selectLevel('2', this)">🟡 ปานกลาง</div>
+        <div class="level-tab hard" onclick="selectLevel('3', this)">🔴 ยาก</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="generateQuestions()" id="genBtn">
+      ✨ สร้างโจทย์
+    </button>
+  </div>
+
+  <div id="questionsArea"></div>
+  <div class="summary" id="summary">
+    <h3 id="summaryScore"></h3>
+    <p id="summaryText"></p>
+  </div>
+</div>
+
+<script>
+let selectedLevel = '1';
+let questions = [];
+let scores = [];
+
+function selectLevel(level, el) {
+  selectedLevel = level;
+  document.querySelectorAll('.level-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+async function generateQuestions() {
+  const topic = document.getElementById('topic').value.trim();
+  const amount = document.getElementById('amount').value;
+  if (!topic) { alert('กรุณาป้อนหัวข้อก่อน'); return; }
+
+  const btn = document.getElementById('genBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังสร้างโจทย์...';
+  document.getElementById('summary').style.display = 'none';
+
+  document.getElementById('questionsArea').innerHTML = `
+    <div class="card loading">
+      <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+      <p style="margin-top:12px">AI กำลังสร้างโจทย์จากข้อสอบของคุณ...</p>
+    </div>`;
+
+  try {
+    const res = await fetch('/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({topic, level: selectedLevel, amount: parseInt(amount)})
+    });
+    const data = await res.json();
+    questions = data.questions;
+    scores = new Array(questions.length).fill(null);
+    renderQuestions();
+  } catch(e) {
+    document.getElementById('questionsArea').innerHTML = `<div class="card" style="color:#f87171">เกิดข้อผิดพลาด กรุณาลองใหม่</div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✨ สร้างโจทย์';
+}
+
+function renderQuestions() {
+  const levelNames = {'1':'ง่าย','2':'ปานกลาง','3':'ยาก'};
+  const levelColors = {'1':'#22c55e','2':'#f59e0b','3':'#ef4444'};
+  
+  let html = `<div class="card">
+    <h2>โจทย์ระดับ<span style="color:${levelColors[selectedLevel]}">${levelNames[selectedLevel]}</span> — ${questions.length} ข้อ</h2>`;
+  
+  questions.forEach((q, i) => {
+    html += `
+    <div class="question-card">
+      <div class="q-num">ข้อที่ ${i+1}</div>
+      <div class="q-text">${q.question}</div>
+      <div class="answer-area">
+        <textarea class="answer-input" id="ans_${i}" placeholder="พิมพ์คำตอบของคุณที่นี่..."></textarea>
+        <button class="btn-check" onclick="checkAnswer(${i})" id="checkBtn_${i}">ตรวจ ✓</button>
+      </div>
+      <div class="result-box" id="result_${i}"></div>
+    </div>`;
+  });
+  
+  html += `<button class="btn btn-primary" onclick="checkAll()" style="margin-top:8px">ตรวจทั้งหมด และดูคะแนน</button></div>`;
+  document.getElementById('questionsArea').innerHTML = html;
+}
+
+async function checkAnswer(i) {
+  const userAnswer = document.getElementById(`ans_${i}`).value.trim();
+  if (!userAnswer) { alert('กรุณาพิมพ์คำตอบก่อน'); return; }
+
+  const btn = document.getElementById(`checkBtn_${i}`);
+  btn.disabled = true;
+  btn.textContent = 'กำลังตรวจ...';
+
+  const resultBox = document.getElementById(`result_${i}`);
+  resultBox.style.display = 'none';
+
+  try {
+    const res = await fetch('/check', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        question: questions[i].question,
+        answer: questions[i].answer,
+        user_answer: userAnswer
+      })
+    });
+    const data = await res.json();
+    scores[i] = data.score;
+
+    let cls = data.correct ? 'correct' : (data.score >= 50 ? 'partial' : 'wrong');
+    let icon = data.correct ? '✅' : (data.score >= 50 ? '⚠️' : '❌');
+    
+    resultBox.className = `result-box ${cls}`;
+    resultBox.innerHTML = `
+      <strong>${icon} ${data.correct ? 'ถูกต้อง!' : (data.score >= 50 ? 'ถูกบางส่วน' : 'ผิด')}</strong>
+      <span class="score-badge" style="background:${data.correct?'#166534':'#991b1b'}">${data.score} คะแนน</span>
+      <br><br>
+      <strong>Feedback:</strong> ${data.feedback}
+      <br><br>
+      <strong>เฉลย:</strong> ${data.correct_answer}`;
+    resultBox.style.display = 'block';
+  } catch(e) {
+    resultBox.className = 'result-box wrong';
+    resultBox.textContent = 'เกิดข้อผิดพลาด กรุณาลองใหม่';
+    resultBox.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'ตรวจ ✓';
+}
+
+async function checkAll() {
+  for (let i = 0; i < questions.length; i++) {
+    if (scores[i] === null) await checkAnswer(i);
+  }
+  
+  const validScores = scores.filter(s => s !== null);
+  const avg = validScores.length ? Math.round(validScores.reduce((a,b) => a+b, 0) / validScores.length) : 0;
+  const summary = document.getElementById('summary');
+  document.getElementById('summaryScore').textContent = `คะแนนรวม: ${avg}/100`;
+  document.getElementById('summaryText').textContent = avg >= 80 ? '🎉 ยอดเยี่ยม! เข้าใจเนื้อหาดีมาก' : avg >= 60 ? '👍 ดี! ลองฝึกเพิ่มอีกนิดนะ' : '📚 ต้องทบทวนเพิ่มเติมครับ';
+  summary.style.display = 'block';
+  summary.scrollIntoView({behavior:'smooth'});
+}
+</script>
+</body>
+</html>

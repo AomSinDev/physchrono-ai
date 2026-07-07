@@ -1,0 +1,7 @@
+flask
+flask-cors
+groq
+chromadb
+sentence-transformers
+pymupdf
+gunicorn
