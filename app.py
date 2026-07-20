@@ -14,12 +14,28 @@ CORS(app)
 UPLOAD_FOLDER = "./pdf_files"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-model      = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2", device="cpu", cache_folder="./model_cache")
-client_db  = chromadb.PersistentClient(path="./database")
-collection = client_db.get_or_create_collection("physics_exams")
+# ==== Lazy-load: ไม่โหลดตอน start server ====
+_model = None
+_collection = None
 
-# ดึง API key จาก environment variable แทนการเขียนตรงๆ
-client_ai  = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+def get_model():
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(
+            "paraphrase-multilingual-MiniLM-L12-v2",
+            device="cpu",
+            cache_folder="./model_cache",
+        )
+    return _model
+
+def get_collection():
+    global _collection
+    if _collection is None:
+        client_db = chromadb.PersistentClient(path="./database")
+        _collection = client_db.get_or_create_collection("physics_exams")
+    return _collection
+
+client_ai = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def index_pdf(pdf_path: str):
     doc    = fitz.open(pdf_path)
@@ -30,9 +46,9 @@ def index_pdf(pdf_path: str):
         if text.strip():
             chunks.append({"text": text, "page": page_num + 1, "file": fname})
     for chunk in chunks:
-        embedding = model.encode(chunk["text"]).tolist()
+        embedding = get_model().encode(chunk["text"]).tolist()
         doc_id    = f"{chunk['file']}_page{chunk['page']}"
-        collection.upsert(
+        get_collection().upsert(
             ids=[doc_id],
             embeddings=[embedding],
             documents=[chunk["text"]],
@@ -41,8 +57,8 @@ def index_pdf(pdf_path: str):
     return len(chunks)
 
 def generate_questions(topic: str, level: str, amount: int = 5):
-    query_embedding = model.encode(topic).tolist()
-    results  = collection.query(query_embeddings=[query_embedding], n_results=5)
+    query_embedding = get_model().encode(topic).tolist()
+    results  = get_collection().query(query_embeddings=[query_embedding], n_results=5)
     context  = "\n\n".join(results["documents"][0]) if results["documents"][0] else ""
     level_detail = {
         "1": ("ง่าย",     "ใช้สูตรตรงๆ ค่าตัวเลขง่าย"),
