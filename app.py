@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import chromadb
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from groq import Groq
 import fitz  # pymupdf
 import json
@@ -14,19 +14,17 @@ CORS(app)
 UPLOAD_FOLDER = "./pdf_files"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ==== Lazy-load: ไม่โหลดตอน start server ====
+# ==== Lazy-load: โหลดโมเดล/ฐานข้อมูลตอนมีการเรียกใช้จริงเท่านั้น ====
 _model = None
 _collection = None
+
 
 def get_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer(
-            "paraphrase-multilingual-MiniLM-L12-v2",
-            device="cpu",
-            cache_folder="./model_cache",
-        )
+        _model = TextEmbedding(model_name="intfloat/multilingual-e5-small")
     return _model
+
 
 def get_collection():
     global _collection
@@ -35,7 +33,15 @@ def get_collection():
         _collection = client_db.get_or_create_collection("physics_exams")
     return _collection
 
+
+def embed_text(text: str):
+    """คืนค่า embedding vector (list ของ float) สำหรับข้อความเดียว"""
+    return list(get_model().embed([text]))[0].tolist()
+
+
+# ดึง API key จาก environment variable แทนการเขียนตรงๆ
 client_ai = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
 
 def index_pdf(pdf_path: str):
     doc    = fitz.open(pdf_path)
@@ -46,7 +52,7 @@ def index_pdf(pdf_path: str):
         if text.strip():
             chunks.append({"text": text, "page": page_num + 1, "file": fname})
     for chunk in chunks:
-        embedding = get_model().encode(chunk["text"]).tolist()
+        embedding = embed_text(chunk["text"])
         doc_id    = f"{chunk['file']}_page{chunk['page']}"
         get_collection().upsert(
             ids=[doc_id],
@@ -56,8 +62,9 @@ def index_pdf(pdf_path: str):
         )
     return len(chunks)
 
+
 def generate_questions(topic: str, level: str, amount: int = 5):
-    query_embedding = get_model().encode(topic).tolist()
+    query_embedding = embed_text(topic)
     results  = get_collection().query(query_embeddings=[query_embedding], n_results=5)
     context  = "\n\n".join(results["documents"][0]) if results["documents"][0] else ""
     level_detail = {
@@ -97,6 +104,7 @@ def generate_questions(topic: str, level: str, amount: int = 5):
     text = re.sub(r"```json|```", "", text).strip()
     return json.loads(text)
 
+
 def check_answer(question: str, correct_answer: str, user_answer: str):
     prompt = f"""โจทย์: {question}
 เฉลยที่ถูกต้อง: {correct_answer}
@@ -117,9 +125,11 @@ def check_answer(question: str, correct_answer: str, user_answer: str):
     text = re.sub(r"```json|```", "", text).strip()
     return json.loads(text)
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/upload-pdf", methods=["POST"])
 def upload_pdf():
@@ -137,10 +147,12 @@ def upload_pdf():
         results.append({"file": f.filename, "pages": pages, "success": True})
     return jsonify({"results": results})
 
+
 @app.route("/list-pdfs", methods=["GET"])
 def list_pdfs():
     files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith(".pdf")]
     return jsonify({"files": files})
+
 
 @app.route("/generate", methods=["POST"])
 def generate():
@@ -152,11 +164,13 @@ def generate():
     )
     return jsonify(result)
 
+
 @app.route("/check", methods=["POST"])
 def check():
     data   = request.json
     result = check_answer(data["question"], data["answer"], data["user_answer"])
     return jsonify(result)
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
