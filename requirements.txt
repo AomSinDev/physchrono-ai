@@ -2,6 +2,6 @@ flask
 flask-cors
 groq
 chromadb
-sentence-transformers
+fastembed
 pymupdf
 gunicorn
