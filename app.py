@@ -47,6 +47,37 @@ def _fix_superscripts(questions: list) -> list:
     return questions
 
 
+_FOREIGN_CHAR_PATTERN = re.compile(
+    r"[\u4e00-\u9fff"   # CJK Unified Ideographs (จีน)
+    r"\u3040-\u30ff"    # Hiragana/Katakana (ญี่ปุ่น)
+    r"\uac00-\ud7a3"    # Hangul (เกาหลี)
+    r"]"
+)
+
+
+def _contains_foreign_chars(questions: list) -> bool:
+    for q in questions:
+        texts = [q.get("question", ""), q.get("answer", "")]
+        texts += [c.get("text", "") for c in q.get("choices", [])]
+        for t in texts:
+            if _FOREIGN_CHAR_PATTERN.search(t):
+                return True
+    return False
+
+
+def _strip_foreign_chars(questions: list) -> list:
+    """กันไว้ชั้นสุดท้าย: ถ้า AI ยังสร้างตัวอักษรแปลกปลอมซ้ำหลายรอบ ให้ตัดออกเลยแทนที่จะปล่อยผ่าน"""
+    for q in questions:
+        if "question" in q:
+            q["question"] = _FOREIGN_CHAR_PATTERN.sub("", q["question"])
+        if "answer" in q:
+            q["answer"] = _FOREIGN_CHAR_PATTERN.sub("", q["answer"])
+        for choice in q.get("choices", []):
+            if "text" in choice:
+                choice["text"] = _FOREIGN_CHAR_PATTERN.sub("", choice["text"])
+    return questions
+
+
 def _fix_correct_letters(questions: list) -> list:
     """
     AI บางครั้งคำนวณเลขถูกในคำอธิบาย แต่แปะป้าย 'correct' ผิดตัวเลือก
@@ -108,6 +139,7 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
 4. เขียนคำอธิบายในฟิลด์ "answer" แบบมั่นใจ ตรงไปตรงมา แสดงวิธีคำนวณทีละขั้นตอน ห้ามเขียนลังเลหรือขัดแย้งกันเอง (เช่น ห้ามเขียนทำนอง "แต่ตัวเลือกที่ใกล้ที่สุดคือ...")
 5. เขียนโจทย์และคำอธิบายเป็นภาษาไทยล้วน ห้ามใส่คำภาษาอังกฤษปนที่ไม่มีความหมาย (เช่น คำย่อแปลกๆ) ยกเว้นสัญลักษณ์หน่วยสากลมาตรฐานเท่านั้น เช่น m, s, kg, N, J, m/s, m/s^2
 6. หน่วยที่มีเลขยกกำลัง ให้เขียนด้วยสัญลักษณ์หน่วยสากลแบบย่อเสมอ เช่น "m/s^2" (จะถูกแปลงเป็น m/s² อัตโนมัติ) ห้ามสะกดหน่วยเป็นคำไทยยาวๆ แบบ "เมตร/วินาที^2"
+7. ห้ามใช้ตัวอักษรจีน ญี่ปุ่น เกาหลี หรือภาษาอื่นใดนอกจากไทยและอังกฤษเด็ดขาด ไม่ว่ากรณีใดก็ตาม
 
 ตอบในรูปแบบ JSON เท่านั้น:
 {{
@@ -127,16 +159,27 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
     }}
   ]
 }}"""
-    response = client_ai.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-    )
-    text = response.choices[0].message.content
-    text = re.sub(r"```json|```", "", text).strip()
-    result = json.loads(text)
+    max_attempts = 3
+    result = None
+    for attempt in range(max_attempts):
+        response = client_ai.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        text = response.choices[0].message.content
+        text = re.sub(r"```json|```", "", text).strip()
+        result = json.loads(text)
+
+        if not _contains_foreign_chars(result.get("questions", [])):
+            break
+        # ถ้าเจอตัวอักษรแปลกปลอม ลองสร้างใหม่อีกรอบ (ยกเว้นรอบสุดท้าย)
+
     result["questions"] = _fix_correct_letters(result.get("questions", []))
     result["questions"] = _fix_superscripts(result["questions"])
+    if _contains_foreign_chars(result["questions"]):
+        # สร้างใหม่ครบ 3 รอบแล้วยังไม่สะอาด — ตัดตัวอักษรแปลกปลอมทิ้งเป็นทางสุดท้าย
+        result["questions"] = _strip_foreign_chars(result["questions"])
     return result
 
 
