@@ -24,6 +24,29 @@ def extract_pdf_text(file_storage) -> str:
         return "\n\n".join(pages)
 
 
+_SUPERSCRIPT_MAP = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
+
+
+def _to_superscript(text: str) -> str:
+    """แปลงเลขยกกำลังแบบ ^2 หรือ ^-1 ให้เป็นสัญลักษณ์ยกกำลังจริง (²) แทนเครื่องหมาย caret"""
+    def replace(match):
+        exponent = match.group(1)
+        return exponent.translate(_SUPERSCRIPT_MAP)
+    return re.sub(r"\^(-?\d+)", replace, text)
+
+
+def _fix_superscripts(questions: list) -> list:
+    for q in questions:
+        if "question" in q:
+            q["question"] = _to_superscript(q["question"])
+        if "answer" in q:
+            q["answer"] = _to_superscript(q["answer"])
+        for choice in q.get("choices", []):
+            if "text" in choice:
+                choice["text"] = _to_superscript(choice["text"])
+    return questions
+
+
 def _fix_correct_letters(questions: list) -> list:
     """
     AI บางครั้งคำนวณเลขถูกในคำอธิบาย แต่แปะป้าย 'correct' ผิดตัวเลือก
@@ -83,6 +106,8 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
 2. ฟิลด์ "correct" ต้องตรงกับตัวอักษรของตัวเลือกที่มีค่าตรงกับคำตอบที่คำนวณได้จริงเท่านั้น ห้ามเดาหรือเลือกแบบประมาณ
 3. ใส่ฟิลด์ "correct_value" เป็นตัวเลขล้วน (ไม่มีหน่วย ไม่มีข้อความ) ของคำตอบที่ถูกต้องจริงๆ ที่คำนวณได้ เพื่อใช้ตรวจสอบ
 4. เขียนคำอธิบายในฟิลด์ "answer" แบบมั่นใจ ตรงไปตรงมา แสดงวิธีคำนวณทีละขั้นตอน ห้ามเขียนลังเลหรือขัดแย้งกันเอง (เช่น ห้ามเขียนทำนอง "แต่ตัวเลือกที่ใกล้ที่สุดคือ...")
+5. เขียนโจทย์และคำอธิบายเป็นภาษาไทยล้วน ห้ามใส่คำภาษาอังกฤษปนที่ไม่มีความหมาย (เช่น คำย่อแปลกๆ) ยกเว้นสัญลักษณ์หน่วยสากลมาตรฐานเท่านั้น เช่น m, s, kg, N, J, m/s, m/s^2
+6. หน่วยที่มีเลขยกกำลัง ให้เขียนด้วยสัญลักษณ์หน่วยสากลแบบย่อเสมอ เช่น "m/s^2" (จะถูกแปลงเป็น m/s² อัตโนมัติ) ห้ามสะกดหน่วยเป็นคำไทยยาวๆ แบบ "เมตร/วินาที^2"
 
 ตอบในรูปแบบ JSON เท่านั้น:
 {{
@@ -111,6 +136,7 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
     text = re.sub(r"```json|```", "", text).strip()
     result = json.loads(text)
     result["questions"] = _fix_correct_letters(result.get("questions", []))
+    result["questions"] = _fix_superscripts(result["questions"])
     return result
 
 
