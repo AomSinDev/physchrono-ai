@@ -1,39 +1,30 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from groq import Groq
-import fitz  # pymupdf — ใช้แค่อ่านข้อความจาก PDF เบามาก ไม่ต้องพึ่ง torch
+import fitz  # pymupdf — อ่านข้อความจาก PDF เบามาก ไม่ต้องพึ่ง torch
 import json
 import re
 import os
+import tempfile
 
 app = Flask(__name__)
 CORS(app)
 
-UPLOAD_FOLDER = "./pdf_files"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 client_ai = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# เก็บข้อความที่อ่านได้จาก PDF ไว้ในหน่วยความจำ (ไม่ใช้ vector DB)
-# โครงสร้าง: { "ชื่อไฟล์.pdf": "ข้อความทั้งหมดในไฟล์" }
-_pdf_texts: dict[str, str] = {}
+MAX_CONTEXT_CHARS = 8000  # กันพรอมต์ยาวเกินไป
 
 
-def extract_pdf_text(pdf_path: str) -> str:
-    doc = fitz.open(pdf_path)
-    pages = [page.get_text() for page in doc if page.get_text().strip()]
-    return "\n\n".join(pages)
+def extract_pdf_text(file_storage) -> str:
+    """อ่านข้อความจากไฟล์ PDF ที่อัปโหลดมา (ไม่บันทึกถาวร ใช้แค่ตอนคำขอนี้)"""
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+        file_storage.save(tmp.name)
+        doc = fitz.open(tmp.name)
+        pages = [page.get_text() for page in doc if page.get_text().strip()]
+        return "\n\n".join(pages)
 
 
-def build_context(max_chars: int = 6000) -> str:
-    """รวมข้อความจาก PDF ทั้งหมดที่เคยอัปโหลด (ตัดความยาวกันพรอมต์บวมเกินไป)"""
-    if not _pdf_texts:
-        return ""
-    combined = "\n\n".join(_pdf_texts.values())
-    return combined[:max_chars]
-
-
-def generate_questions(topic: str, level: str, amount: int = 5):
+def generate_questions(topic: str, level: str, amount: int = 5, context: str = ""):
     level_detail = {
         "1": ("ง่าย",     "ใช้สูตรตรงๆ ค่าตัวเลขง่าย"),
         "2": ("ปานกลาง", "ต้องคิด 2-3 ขั้นตอน"),
@@ -41,8 +32,9 @@ def generate_questions(topic: str, level: str, amount: int = 5):
     }
     level_name, level_desc = level_detail.get(level, ("ปานกลาง", "ต้องคิด 2-3 ขั้นตอน"))
 
-    context = build_context()
-    context_section = f"อ้างอิงจากเนื้อหาข้อสอบฟิสิกส์นี้:\n{context}\n\n" if context else ""
+    context_section = ""
+    if context:
+        context_section = f"อ้างอิงจากเนื้อหาในเอกสารนี้:\n{context[:MAX_CONTEXT_CHARS]}\n\n"
 
     prompt = f"""{context_section}สร้างแบบฝึกหัดฟิสิกส์ระดับ{level_name} หัวข้อ "{topic}" จำนวน {amount} ข้อ
 เงื่อนไข: {level_desc}
@@ -101,28 +93,35 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/upload-pdf", methods=["POST"])
-def upload_pdf():
+@app.route("/extract-pdf", methods=["POST"])
+def extract_pdf():
+    """รับไฟล์ PDF มาแล้วคืนข้อความล้วนกลับไปทันที ไม่เก็บไว้ที่ server"""
     if "file" not in request.files:
         return jsonify({"error": "ไม่พบไฟล์"}), 400
-    files   = request.files.getlist("file")
-    results = []
+
+    files = request.files.getlist("file")
+    combined_text = []
+    file_names = []
+
     for f in files:
         if not f.filename.endswith(".pdf"):
-            results.append({"file": f.filename, "error": "ไม่ใช่ไฟล์ PDF"})
             continue
-        save_path = os.path.join(UPLOAD_FOLDER, f.filename)
-        f.save(save_path)
-        text = extract_pdf_text(save_path)
-        _pdf_texts[f.filename] = text
-        results.append({"file": f.filename, "chars": len(text), "success": True})
-    return jsonify({"results": results})
+        try:
+            text = extract_pdf_text(f)
+            combined_text.append(text)
+            file_names.append(f.filename)
+        except Exception as e:
+            return jsonify({"error": f"อ่านไฟล์ {f.filename} ไม่สำเร็จ: {str(e)}"}), 400
 
+    if not combined_text:
+        return jsonify({"error": "ไม่พบไฟล์ PDF ที่ใช้ได้"}), 400
 
-@app.route("/list-pdfs", methods=["GET"])
-def list_pdfs():
-    files = [f for f in os.listdir(UPLOAD_FOLDER) if f.endswith(".pdf")]
-    return jsonify({"files": files})
+    full_text = "\n\n".join(combined_text)
+    return jsonify({
+        "text": full_text[:MAX_CONTEXT_CHARS],
+        "files": file_names,
+        "chars": len(full_text),
+    })
 
 
 @app.route("/generate", methods=["POST"])
@@ -132,6 +131,7 @@ def generate():
         data["topic"],
         data.get("level", "2"),
         int(data.get("amount", 5)),
+        data.get("context", ""),
     )
     return jsonify(result)
 
