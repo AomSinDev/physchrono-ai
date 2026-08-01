@@ -24,6 +24,44 @@ def extract_pdf_text(file_storage) -> str:
         return "\n\n".join(pages)
 
 
+def _fix_correct_letters(questions: list) -> list:
+    """
+    AI บางครั้งคำนวณเลขถูกในคำอธิบาย แต่แปะป้าย 'correct' ผิดตัวเลือก
+    ฟังก์ชันนี้เทียบค่าตัวเลขจริง (correct_value) กับตัวเลขในแต่ละตัวเลือก
+    แล้วแก้ป้าย correct ให้ตรงกับตัวเลือกที่ใกล้เคียงค่าจริงที่สุด
+    """
+    num_pattern = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+    for q in questions:
+        correct_value = q.pop("correct_value", None)
+        if correct_value is None:
+            continue
+        try:
+            target = float(correct_value)
+        except (TypeError, ValueError):
+            continue
+
+        best_letter = None
+        best_diff = None
+        for choice in q.get("choices", []):
+            match = num_pattern.search(str(choice.get("text", "")))
+            if not match:
+                continue
+            try:
+                value = float(match.group())
+            except ValueError:
+                continue
+            diff = abs(value - target)
+            if best_diff is None or diff < best_diff:
+                best_diff = diff
+                best_letter = choice.get("letter")
+
+        if best_letter:
+            q["correct"] = best_letter
+
+    return questions
+
+
 def generate_questions(topic: str, level: str, amount: int = 5, context: str = ""):
     level_detail = {
         "1": ("ง่าย",     "ใช้สูตรตรงๆ ค่าตัวเลขง่าย"),
@@ -40,6 +78,12 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
 เงื่อนไข: {level_desc}
 แต่ละข้อต้องมีตัวเลือก A B C D พร้อมระบุข้อที่ถูก
 
+กฎสำคัญที่ต้องทำตามทุกข้อ:
+1. คำนวณคำตอบที่ถูกต้องให้แม่นยำก่อน แล้วค่อยใส่เป็นหนึ่งในตัวเลือก A-D (ห้ามให้ตัวเลือกที่ถูกคลาดเคลื่อนจากค่าที่คำนวณได้จริง)
+2. ฟิลด์ "correct" ต้องตรงกับตัวอักษรของตัวเลือกที่มีค่าตรงกับคำตอบที่คำนวณได้จริงเท่านั้น ห้ามเดาหรือเลือกแบบประมาณ
+3. ใส่ฟิลด์ "correct_value" เป็นตัวเลขล้วน (ไม่มีหน่วย ไม่มีข้อความ) ของคำตอบที่ถูกต้องจริงๆ ที่คำนวณได้ เพื่อใช้ตรวจสอบ
+4. เขียนคำอธิบายในฟิลด์ "answer" แบบมั่นใจ ตรงไปตรงมา แสดงวิธีคำนวณทีละขั้นตอน ห้ามเขียนลังเลหรือขัดแย้งกันเอง (เช่น ห้ามเขียนทำนอง "แต่ตัวเลือกที่ใกล้ที่สุดคือ...")
+
 ตอบในรูปแบบ JSON เท่านั้น:
 {{
   "questions": [
@@ -53,6 +97,7 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
         {{"letter": "D", "text": "ตัวเลือก D"}}
       ],
       "correct": "A",
+      "correct_value": 0,
       "answer": "เฉลยและวิธีทำละเอียด"
     }}
   ]
@@ -60,11 +105,13 @@ def generate_questions(topic: str, level: str, amount: int = 5, context: str = "
     response = client_ai.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=0.3,
     )
     text = response.choices[0].message.content
     text = re.sub(r"```json|```", "", text).strip()
-    return json.loads(text)
+    result = json.loads(text)
+    result["questions"] = _fix_correct_letters(result.get("questions", []))
+    return result
 
 
 def check_answer(question: str, correct_answer: str, user_answer: str):
